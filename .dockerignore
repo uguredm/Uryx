@@ -1,0 +1,16 @@
+.git
+.env
+node_modules
+**/node_modules
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/.venv
+**/dist
+**/out
+**/*.tsbuildinfo
+apps/api/*.db
+apps/desktop/build/*.ico
+apps/desktop/build/*.icns

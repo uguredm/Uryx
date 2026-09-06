@@ -1,0 +1,76 @@
+[project]
+name = "uryx-api"
+version = "0.1.0"
+description = "Uryx backend — FastAPI + llama.cpp + Qdrant + PostgreSQL"
+requires-python = ">=3.11"
+readme = "README.md"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+# ------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["app", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle
+    "F",    # pyflakes
+    "I",    # isort
+    "N",    # pep8-naming
+    "UP",   # pyupgrade
+    "B",    # bugbear
+    "C4",   # comprehensions
+    "SIM",  # simplify
+    "ASYNC",
+    "RUF",
+]
+ignore = [
+    "B008",   # FastAPI Depends() varsayılan argümanda kullanılır
+    "RUF001", # Türkçe karakterler "ambiguous unicode" olarak işaretleniyor
+    "RUF002",
+    "RUF003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]
+"app/db/models.py" = ["N815"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+# ------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.11"
+plugins = ["pydantic.mypy"]
+warn_unused_configs = true
+warn_redundant_casts = true
+disallow_untyped_defs = true
+no_implicit_optional = true
+check_untyped_defs = true
+ignore_missing_imports = true
+show_error_codes = true
+exclude = ["^alembic/", "^tests/"]
+
+[[tool.mypy.overrides]]
+module = ["tests.*", "alembic.*"]
+disallow_untyped_defs = false
+ignore_errors = true
+
+# ------------------------------------------------------------------
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q --strict-markers"
+markers = [
+    "integration: dış servis gerektiren testler",
+]
+filterwarnings = ["ignore::DeprecationWarning"]

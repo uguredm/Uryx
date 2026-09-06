@@ -1,0 +1,11 @@
+{
+  "files": [],
+  "include": [],
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"],
+      "@shared/*": ["../../packages/shared-types/src/*"]
+    }
+  }
+}

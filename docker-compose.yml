@@ -1,0 +1,253 @@
+name: uryx
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: '10m'
+    max-file: '3'
+
+x-healthcheck-defaults: &healthcheck-defaults
+  interval: 15s
+  timeout: 5s
+  retries: 5
+  start_period: 30s
+
+networks:
+  uryx-net:
+    driver: bridge
+    name: uryx-net
+
+volumes:
+  postgres-data:
+    name: jarvis-postgres-data
+  qdrant-data:
+    name: jarvis-qdrant-data
+  hf-cache:
+    name: jarvis-hf-cache
+  whisper-models:
+    name: jarvis-whisper-models
+  piper-voices:
+    name: jarvis-piper-voices
+  api-uploads:
+    name: jarvis-api-uploads
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: uryx-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-jarvis}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-jarvis_local_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-jarvis}
+      POSTGRES_INITDB_ARGS: '--encoding=UTF8 --locale=C'
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    networks: [uryx-net]
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-jarvis} -d ${POSTGRES_DB:-jarvis}']
+      <<: *healthcheck-defaults
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: ${POSTGRES_MEM_LIMIT:-1g}
+
+  postgres-debug-port:
+    image: alpine/socat:latest
+    container_name: uryx-postgres-debug
+    profiles: [debug]
+    command: TCP-LISTEN:5432,fork,reuseaddr TCP:postgres:5432
+    ports:
+      - '127.0.0.1:${POSTGRES_PORT:-5432}:5432'
+    depends_on:
+      postgres: { condition: service_healthy }
+    networks: [uryx-net]
+    restart: unless-stopped
+    logging: *default-logging
+
+  qdrant:
+    image: qdrant/qdrant:v1.12.4
+    container_name: uryx-qdrant
+    restart: unless-stopped
+    environment:
+      QDRANT__SERVICE__HTTP_PORT: 6333
+      QDRANT__SERVICE__GRPC_PORT: 6334
+      QDRANT__LOG_LEVEL: WARN
+      QDRANT__TELEMETRY_DISABLED: 'true'
+    volumes:
+      - qdrant-data:/qdrant/storage
+    networks: [uryx-net]
+    healthcheck:
+      test: ['CMD-SHELL', 'bash -c "exec 3<>/dev/tcp/127.0.0.1/6333 && echo -e \"GET /readyz HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n\" >&3 && grep -q \"200 OK\" <&3"']
+      <<: *healthcheck-defaults
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: ${QDRANT_MEM_LIMIT:-2g}
+
+  qdrant-debug-port:
+    image: alpine/socat:latest
+    container_name: uryx-qdrant-debug
+    profiles: [debug]
+    command: TCP-LISTEN:6333,fork,reuseaddr TCP:qdrant:6333
+    ports:
+      - '127.0.0.1:${QDRANT_PORT:-6333}:6333'
+    depends_on:
+      qdrant: { condition: service_started }
+    networks: [uryx-net]
+    restart: unless-stopped
+    logging: *default-logging
+
+  llm:
+    image: ${LLM_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda}
+    container_name: uryx-llm
+    restart: unless-stopped
+    volumes:
+      - "${LLM_MODELS_DIR:-./models}:/models:ro"
+    command:
+      - -m
+      - /models/${LLM_GGUF_FILE:-Qwen3-8B-Q4_K_M.gguf}
+      - --alias
+      - ${LLM_MODEL:-qwen3-8b}
+      - -c
+      - ${LLM_MAX_MODEL_LEN:-8192}
+      - -ngl
+      - ${LLM_N_GPU_LAYERS:-99}
+      - --parallel
+      - '1'
+      - --host
+      - 0.0.0.0
+      - --port
+      - '8000'
+      - --jinja
+      - -fa
+      - auto
+      - --reasoning
+      - ${LLM_REASONING:-off}
+    ports:
+      - '127.0.0.1:${LLM_PORT:-8000}:8000'
+    networks: [uryx-net]
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'bash -c ''exec 3<>/dev/tcp/127.0.0.1/8000 || exit 1; printf "GET /health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n" >&3; timeout 4 cat <&3 | grep -qE "\"status\"[[:space:]]*:[[:space:]]*\"ok\""''',
+        ]
+      interval: 20s
+      timeout: 10s
+      retries: 30
+      start_period: 180s
+    logging: *default-logging
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  whisper:
+    build:
+      context: .
+      dockerfile: docker/whisper/Dockerfile
+    image: uryx/whisper:0.1.0
+    container_name: uryx-whisper
+    restart: unless-stopped
+    environment:
+      WHISPER_MODEL: ${WHISPER_MODEL:-medium}
+      WHISPER_DEVICE: ${WHISPER_DEVICE:-cpu}
+      WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-int8}
+      WHISPER_LANGUAGE: ${WHISPER_LANGUAGE:-tr}
+      WHISPER_VAD_FILTER: ${WHISPER_VAD_FILTER:-true}
+      WHISPER_BEAM_SIZE: ${WHISPER_BEAM_SIZE:-5}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      HF_HOME: /models
+    volumes:
+      - whisper-models:/models
+    ports:
+      - '${URYX_BIND_HOST:-127.0.0.1}:${WHISPER_PORT:-8090}:8090'
+    networks: [uryx-net]
+    healthcheck:
+      test: ['CMD-SHELL', 'python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen(''http://127.0.0.1:8090/health'', timeout=3).status==200 else 1)"']
+      interval: 20s
+      timeout: 10s
+      retries: 20
+      start_period: 180s
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: ${WHISPER_MEM_LIMIT:-6g}
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  tts:
+    build:
+      context: .
+      dockerfile: docker/tts/Dockerfile
+    image: uryx/tts:0.1.1
+    container_name: uryx-tts
+    restart: unless-stopped
+    environment:
+      TTS_VOICE: ${TTS_VOICE:-tr_TR-dfki-medium}
+      TTS_SPEED: ${TTS_SPEED:-1.0}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      PIPER_VOICE_DIR: /voices
+    volumes:
+      - piper-voices:/voices
+    networks: [uryx-net]
+    healthcheck:
+      test: ['CMD-SHELL', 'python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen(''http://127.0.0.1:8091/health'', timeout=3).status==200 else 1)"']
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 120s
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: ${TTS_MEM_LIMIT:-2g}
+
+  uryx-api:
+    build:
+      context: .
+      dockerfile: docker/api/Dockerfile
+    image: uryx/api:0.1.0
+    container_name: uryx-api
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-jarvis}:${POSTGRES_PASSWORD:-jarvis_local_dev_password}@postgres:5432/${POSTGRES_DB:-jarvis}
+      QDRANT_URL: http://qdrant:6333
+      VLLM_URL: http://llm:8000/v1
+      LLM_URL: http://llm:8000/v1
+      WHISPER_URL: http://whisper:8090
+      TTS_URL: http://tts:8091
+      HF_HOME: /models
+      PYTHONUNBUFFERED: '1'
+    volumes:
+      - api-uploads:/data/uploads
+      - hf-cache:/models
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - '${URYX_BIND_HOST:-127.0.0.1}:${URYX_API_PORT:-8080}:8080'
+    depends_on:
+      postgres: { condition: service_healthy }
+      qdrant: { condition: service_healthy }
+    networks: [uryx-net]
+    healthcheck:
+      test: ['CMD-SHELL', 'python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen(''http://127.0.0.1:8080/health'', timeout=3).status==200 else 1)"']
+      <<: *healthcheck-defaults
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: '${API_CPU_LIMIT:-4}'
+          memory: ${API_MEM_LIMIT:-4g}

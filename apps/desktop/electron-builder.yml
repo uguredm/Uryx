@@ -1,0 +1,107 @@
+appId: com.uryx.desktop
+productName: Uryx
+copyright: Copyright © 2026 Uryx
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - out/**/*
+  - package.json
+  - '!**/*.map'
+  - '!**/*.ts'
+  - '!node_modules/**/{test,__tests__,tests,powered-test,example,examples}/**'
+  - '!node_modules/**/*.d.ts'
+  - '!node_modules/.bin'
+
+# docker-compose.yml ve scriptler kurulum klasörüne kopyalanır; böylece
+# uygulama servisleri kendi başına başlatabilir.
+extraResources:
+  - from: build/tray.png
+    to: tray.png
+  - from: build/icon.png
+    to: icon.png
+  - from: build/icon.ico
+    to: icon.ico
+  - from: ../../docker-compose.yml
+    to: project/docker-compose.yml
+  - from: ../../.env.example
+    to: project/.env.example
+  - from: ../../.env.example
+    to: project/.env
+  - from: ../../.dockerignore
+    to: project/.dockerignore
+  - from: ../../docker
+    to: project/docker
+  - from: ../../apps/api
+    to: project/apps/api
+    filter:
+      - app/**/*
+      - alembic/**/*
+      - alembic.ini
+      - pyproject.toml
+      - requirements.txt
+  - from: ../../services/tts
+    to: project/services/tts
+    filter:
+      - '**/*.py'
+      - requirements.txt
+  - from: ../../services/whisper
+    to: project/services/whisper
+    filter:
+      - '**/*.py'
+      - requirements.txt
+  - from: ../../models
+    to: project/models
+    filter:
+      - README.md
+      - .gitkeep
+      - '!**/*.gguf'
+      - '!**/.cache/**'
+
+asar: true
+asarUnpack:
+  - '**/*.node'
+  - '**/onnxruntime-node/**'
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: build/icon.ico
+  artifactName: Uryx-Setup.${ext}
+  executableName: Uryx
+  requestedExecutionLevel: asInvoker
+  # Authenticode: WIN_CSC_LINK + WIN_CSC_KEY_PASSWORD (OV .pfx; git'e yok)
+  # veya Azure Trusted Signing env (AZURE_TENANT_ID, AZURE_CLIENT_ID,
+  # AZURE_CLIENT_SECRET, AZURE_CODE_SIGNING_ACCOUNT_NAME, AZURE_CERT_PROFILE_NAME).
+  # win.sign kancası yok — varsayılan CSC; yoksa imzasız. Self-signed yok.
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Uryx
+  deleteAppDataOnUninstall: false
+  installerLanguages:
+    - tr_TR
+    - en_US
+  language: 1055
+
+# latest.yml + .blockmap yerel `release/` çıktısına yazılır (GH_TOKEN olmadan da).
+# GitHub’a electron-builder --publish ile değil, scripts/publish-github-release.ps1
+# ile yükleyin; aksi halde yalnızca .exe gidip auto-update kırılır.
+# Ürün kanalı public `uguredm/Uryx`. Bu geliştirme dosyasında private: false kalır.
+publish:
+  provider: github
+  owner: uguredm
+  repo: Uryx
+  private: true
+  releaseType: release
+
+# Dev bağımlılıkları (React, Tailwind vb.) derlemeye dahil edilir; yalnızca
+# `dependencies` altındaki electron-store ve ws paketleri node_modules'a girer.
+npmRebuild: false

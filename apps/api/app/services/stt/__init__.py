@@ -1,0 +1,1 @@
+"""Konuşma tanıma (STT)."""

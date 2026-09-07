@@ -4,7 +4,7 @@ Product users install `Uryx-Setup.exe` — they do not clone a repo.
 This file is for people changing the code.
 
 The **public product** repository is [`uguredm/Uryx`](https://github.com/uguredm/Uryx).
-Private R&D stays on `uguredm/uryx-test`.
+
 
 ## Requirements
 
